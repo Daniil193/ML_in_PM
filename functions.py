@@ -17,11 +17,10 @@ class Transaction():
         self.df = DataFrame.copy()
         self.tr_col_name = col_transact_name
         self.time_col_name = col_time_name
-        self.t_date = pd.to_datetime('2060-01-01 00:00:00.00')
         self.df.rename(columns={col_identifier_name:"case_name"}, inplace=True)
         self.id_col_name = "case_name"
-        if type(self.df[self.time_col_name][self.df.index[0]]) == str:
-            self.df[self.time_col_name] = pd.to_datetime(self.df[self.time_col_name])
+        self.df[self.time_col_name] = pd.to_datetime(self.df[self.time_col_name], utc=True)
+        self.t_date = max(self.df[self.time_col_name]) + timedelta(days=22000)
         
     def group_case_by_time(self):
         self.df = self.df.set_index([self.id_col_name, self.time_col_name]).sort_index()
