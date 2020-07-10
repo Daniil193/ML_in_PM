@@ -190,7 +190,7 @@ class Frequency_graph():
     def graph_init(self):
         if self.name is None:
             curr_time = datetime.now().strftime("%H:%M:%S").replace(':', '-')
-            self.graph = Digraph('finite_state_machine', filename=f'Frequency_graph_{curr_time}')
+            self.graph = Digraph('finite_state_machine', filename=f'Graph_{curr_time}')
         else:
             self.graph = Digraph('finite_state_machine', filename=self.name)
         self.graph.attr(rankdir='T', size='8,5')
