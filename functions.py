@@ -27,7 +27,7 @@ class Transaction():
         self.df = self.df.reset_index()
     
     def shift_process_col(self):
-        self.df['name_2'] = self.df.groupby(self.id_col_name)[self.tr_col_name].shift(periods=-1, fill_value = 'Конец лога')
+        self.df['name_2'] = self.df.groupby(self.id_col_name)[self.tr_col_name].shift(periods=-1, fill_value = 'Log End')
     
     def shift_time_col(self):
         self.df['time_2'] = self.df.groupby(self.id_col_name)[self.time_col_name].shift(periods=-1, fill_value = self.t_date)
@@ -62,7 +62,7 @@ class Prepare(Transaction):
     
     def add_init_process(cls):
         time_start = cls.df[cls.time_col_name].min() - timedelta(seconds=1)
-        concept_name = 'Начало лога'
+        concept_name = 'Start Log'
         cs_name = cls.df[cls.id_col_name].unique()
         result = pd.DataFrame({cls.id_col_name: cs_name,
                          cls.tr_col_name: concept_name,
@@ -72,7 +72,7 @@ class Prepare(Transaction):
     def get_result(cls):
         cls.add_init_process()
         cls.df = cls.preparing()
-        cls.df.loc[cls.df['transact'].str.contains('Начало лога'), 'time_diff'] = 0
+        cls.df.loc[cls.df['transact'].str.contains('Start Log'), 'time_diff'] = 0
         return cls.df
 
 
@@ -108,16 +108,21 @@ class KMeans_Clusterization():
     
 class DBSCAN_Clusterization():
     def __init__(self, pivot_tabl):
-        self.p_table = pivot_tabl
+        self.p_table = pivot_tabl.copy()
         self.pca_res = None
         self.dist = None
         self.ind = None
     
-    def preparing(self):
+    def count_component(self):
+        single_name = [j.split('-->') for j in self.p_table.columns]
+        count = np.unique([l for l in single_name]).shape[0] - 2 # - 2 is 'Start log' and 'End log'
+        return count
+    
+    def preparing(cls):
         sc = StandardScaler()
-        X_scaled = sc.fit_transform(self.p_table)
-        pca = PCA(n_components=self.p_table.columns.shape[0])
-        self.pca_res = pca.fit_transform(X_scaled)
+        X_scaled = sc.fit_transform(cls.p_table)
+        pca = PCA(n_components=cls.count_component())
+        cls.pca_res = pca.fit_transform(X_scaled)
     
     def calculate_distances(cls):
         cls.preparing()
@@ -195,8 +200,8 @@ class Frequency_graph():
             self.graph = Digraph('finite_state_machine', filename=self.name)
         self.graph.attr(rankdir='T', size='8,5')
         self.graph.attr('node', shape='box', style='filled', color='deepskyblue')
-        self.graph.node('Начало лога', shape='doublecircle', color='deepskyblue1')
-        self.graph.node('Конец лога', shape='doublecircle', color='brown3')
+        self.graph.node('Start Log', shape='doublecircle', color='deepskyblue1')
+        self.graph.node('Log End', shape='doublecircle', color='brown3')
         self.graph.attr('node', shape='box', color='lightblue')
     
     
@@ -265,7 +270,7 @@ class Frequency_graph():
         countss = cls.counts['counts'].values
         
         for c in range(len(transact)):
-            stat_percent = get_stat_freq(countss)
+            stat_percent = cls.get_stat_freq(countss)
             tr = transact[c]
             count = int(countss[c])
             start = tr.split('-->')[0]
@@ -274,9 +279,9 @@ class Frequency_graph():
                    '{0}'.format(end), 
                    label='{0}'.format(count), 
                    arrowhead='vee', 
-                   penwidth=change_width_freq(count, stat_percent), 
-                   color = change_color_freq(count, stat_percent), 
-                   fontcolor=change_color_freq(count, stat_percent))
+                   penwidth=cls.change_width_freq(count, stat_percent), 
+                   color = cls.change_color_freq(count, stat_percent), 
+                   fontcolor=cls.change_color_freq(count, stat_percent))
         cls.graph.view()
 
         
@@ -294,8 +299,8 @@ class Performance_graph(Frequency_graph):
     Функция возвращает граф, где на ребрах обозначены время исполнения перехода между двумя событиями.
                              Чем темнее и толще линия, тем дольше исполняется данный переход.
     """
-    def __init__(self, DataFrame, filename = None):
-        super().__init__(DataFrame, filename = None)
+    def __init__(self, DataFrame, filename=None):
+        super().__init__(DataFrame, filename)
         self.med_time = None
     
     def time_calculate(self, time_treshold, type_value, less_or_more):
@@ -366,6 +371,7 @@ class Performance_graph(Frequency_graph):
         return result
     
     def draw_perform(cls, time_treshold = 'All', type_value = 'median', less_or_more = '>'):
+        print(cls.name)
         cls.time_calculate(time_treshold, type_value, less_or_more)
         cls.graph_init()
         cls.check_colon()
