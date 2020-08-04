@@ -12,7 +12,17 @@ from sklearn.decomposition import PCA
 
 
 class Transaction():
+    """
+    Получаем последовательность событий и время исполнения событий, путем сдвига столбцов
     
+    Input: 
+          - DataFrame: (pd.DataFrame) с обязательным наличием столбцов (идентификаторы, события, время начала исполнения событий)
+          - col_transact_name: (string) имя стобца, содержащий последовательность событий
+          - col_time_name: (string) имя стобца, содержащий время начала исполнения каждого события
+          - col_identifier_name: (string) имя стобца, содержащий идентификаторы последовательности событий
+    Output:
+          - DataFrame: (pd.DataFrame) со столбцами ['case_name', 'transact', 'time_diff']
+    """
     def __init__(self, DataFrame, col_transact_name, col_time_name, col_identifier_name):
         self.df = DataFrame.copy()
         self.tr_col_name = col_transact_name
@@ -56,11 +66,17 @@ class Transaction():
 
 
 class Prepare(Transaction):
+    """
+    Получаем Датафрейм, с преобразованными данными для построения графа, с добавлением нового события в лог
+    """
     
     def __init__(self, DataFrame, col_transact_name, col_time_name, col_identifier_name):
         super().__init__(DataFrame, col_transact_name, col_time_name, col_identifier_name)
     
     def add_init_process(cls):
+        """
+        Функция добавляет новое событие <Start Log> для каждого идентификатора в Датафрейм
+        """
         time_start = cls.df[cls.time_col_name].min() - timedelta(seconds=1)
         concept_name = 'Start Log'
         cs_name = cls.df[cls.id_col_name].unique()
@@ -77,6 +93,15 @@ class Prepare(Transaction):
 
 
 class KMeans_Clusterization():
+    
+    """
+    Проведем кластеризацию данных на основе данных о переходых между событиями для каждого идентификатора
+    Input: 
+          - DataFrame - сводная таблица по столбцам идентификатор - последовательность событий, с аггрегирующей функцией (size)
+          - model (sklearn.cluster.KMeans) инициализированный алгоритм с количеством кластеров по умолчанию
+    Output: DataFrame - сводная таблица с новым столбцом <clusters> - номер кластера для каждого идентификатора
+    """
+    
     def __init__(self, model, DataFrame):
         self.model_ = model
         self.df = DataFrame
@@ -107,6 +132,13 @@ class KMeans_Clusterization():
 
     
 class DBSCAN_Clusterization():
+    
+    """
+    Проведем кластеризацию данных на основе данных о переходых между событиями для каждого идентификатора
+    Input: DataFrame - сводная таблица по столбцам идентификатор - последовательность событий, с аггрегирующей функцией (size)
+    Output: DataFrame - сводная таблица с новым столбцом <clusters> - номер кластера для каждого идентификатора
+    """
+    
     def __init__(self, pivot_tabl):
         self.p_table = pivot_tabl.copy()
         self.pca_res = None
@@ -154,7 +186,12 @@ class DBSCAN_Clusterization():
     
 
 class Select_cluster():
+    """
+    Отберем данные в датафрейме с определенным номером кластера
     
+    Input: full DataFrame 
+    Output: cuted DataFrame with certain cluster number
+    """
     def __init__(self, DataFrame, num_cluster):
         self.df = DataFrame
         self.n_cluster = num_cluster
@@ -421,10 +458,7 @@ def draw_frequency_graph(df_prepared, name_file = None, count_treshold = 'All', 
         except Exception as e:
             print(e)
             print('Параметр count_treshold принимает либо значение All, либо  должно иметь тип integer,\
-            совместно с параметром less_or_more, который принимает одно из следующих значений: "<" или ">"')
-
-    #if (name_file is not None) & ('.pdf' not in name_file):
-        #name_file = name_file + '.pdf'        
+            совместно с параметром less_or_more, который принимает одно из следующих значений: "<" или ">"')       
             
     counts.columns = ['transact', 'counts']
     transact = counts['transact'].values
@@ -500,9 +534,6 @@ def draw_performance_graph(df_prepared, name_file = None, time_treshold = "All",
             print('Параметр time_treshold принимает либо значение All, либо  должно иметь тип integer,\
             совместно с параметром less_or_more, который принимает одно из следующих значений: "<" или ">"')
     
-    #if (name_file is not None) & ('.pdf' not in name_file):
-        #name_file = name_file + '.pdf'
-    
     list_trans = med_time['transact'].values
     times = med_time['median'].values
     
@@ -536,137 +567,3 @@ def draw_performance_graph(df_prepared, name_file = None, time_treshold = "All",
     print('Если всплывает много предупреждений, подсвеченных красным,\
     значит в имени события содержится двоеточие, которое нужно заменить на тире')
     f.view()
-    
-    
-
-# def get_all_process_motion(df, col_transact):
-#     """
-#     Input: df with 3 columns - [case_name, concept:name (col_transact), time:timestamp]
-#     Output: df with
-#     """
-#     t_date = pd.to_datetime('2060-01-01 00:00:00.00') 
-    
-#     sort_grup_1 = df.groupby('case_name').apply(lambda x: x.sort_values('time:timestamp'))
-# #     sort_grup_1 = df.copy()
-#     print('Sort by time at {0}'.format(str(datetime.now().time())))
-    
-#     sort_grup_1['concept:name:2'] = pd.DataFrame(sort_grup_1.groupby('case_name').apply(lambda x: \
-#                          x[col_transact].shift(periods=-1).fillna('Конец лога')))[col_transact].values
-#     print('Shift processes at {0}'.format(str(datetime.now().time())))
-    
-#     sort_grup_1['time:timestamp:2'] = pd.DataFrame(sort_grup_1.groupby('case_name').apply(lambda x: \
-#                       x['time:timestamp'].shift(periods=-1).fillna(t_date)))['time:timestamp'].values
-#     print('Shift time at {0}'.format(str(datetime.now().time())))
-    
-#     sort_grup_1['time_diff'] = sort_grup_1['time:timestamp:2'] - sort_grup_1['time:timestamp']
-#     print('Get difference time at {0}'.format(str(datetime.now().time())))
-    
-#     sort_grup_1['time_diff'] = sort_grup_1['time_diff'].apply(lambda x: 0 if x.days > 1000 else x.total_seconds())
-#     print('Get difference time_2 at {0}'.format(str(datetime.now().time())))
-    
-#     sort_grup_1['transact'] = sort_grup_1[col_transact]+'-->'+sort_grup_1['concept:name:2']
-#     print('Get transact at {0}'.format(str(datetime.now().time())))
-    
-#     return sort_grup_1[['transact', 'time_diff']].reset_index()
-
-
-
-# def prepare_cases(df):
-#     temp_df = pd.DataFrame(df)
-#     print(temp_df.columns)
-#     time_start = temp_df['time:timestamp'][0] - timedelta(seconds=1)
-#     concept_name = 'Начало лога'
-#     cs_name = temp_df.index.tolist()[0]
-    
-#     result = temp_df.append({'case_name': cs_name,
-#                          'concept:name': concept_name,
-#                          'time:timestamp': time_start}, ignore_index=True)
-#     result = result.sort_values('time:timestamp')
-#     return result
-
-
-# def get_one_event_dict(one_event, case_name,data_types):
-
-#     one_event_attri = list(one_event.keys())
-
-#     one_event_dict = {}
-#     for i in data_types:
-#         if i in one_event_attri:
-#             if type(one_event[i]) == list:
-#                 for j in one_event[i]:
-#                     one_event_dict[j['@key']] = j['@value']
-#             else:
-#                 one_event_dict[one_event[i]['@key']] = one_event[i]['@value']
-#     one_event_dict['case_name'] = case_name
-#     return one_event_dict
-
-# def gain_one_trace_info(one_trace,data_types):
-#     # for the attributer
-#     one_trace_attri = list(one_trace.keys())
-#     one_trace_attri_dict = {}
-
-#     for i in data_types:
-#         if i in one_trace_attri:
-#             if type(one_trace[i]) == list:
-#                 for j in one_trace[i]:
-#                     one_trace_attri_dict[j['@key']] = j['@value']
-#             else:
-#                 one_trace_attri_dict[one_trace[i]['@key']] = one_trace[i]['@value']
-
-#     # for event seq
-#     one_trace_events = []
-#     if type(one_trace['event']) == dict:
-#         one_trace['event'] = [one_trace['event']]
-
-#     for i in one_trace['event']:
-#         inter_event = get_one_event_dict(i, one_trace_attri_dict['concept:name'],data_types)
-#         one_trace_events.append(inter_event)
-
-#     return one_trace_attri_dict,one_trace_events
-
-# def gain_log_info_table(xml_string):
-#     data_types = ['string', 'int', 'date', 'float', 'boolean', 'id']
-
-#     log_is = xmltodict.parse(xml_string)
-#     log_is = loads(dumps(log_is))
-
-#     traces = log_is['log']['trace']
-
-#     trace_attri = []
-#     trace_event = []
-#     j = 0
-#     for i in traces:
-#         inter = gain_one_trace_info(i,data_types)
-#         trace_attri.append(inter[0])
-#         trace_event = trace_event + inter[1]
-#         j = j +1
-# #         print(j)
-#     return trace_attri,trace_event
-
-
-# def line_color(transact, pend, not_pend, intersect):
-#     color = ''
-    
-#     if transact in intersect:
-#         color = 'yellow'
-#     elif transact in pend:
-#         color = 'green'
-#     elif transact in not_pend:
-#         color = 'red'
-#     else:
-#         color = 'black'
-    
-#     return color
-
-
-# def line_width(transact, pend, not_pend):
-#     width = 1
-    
-#     if transact in np.unique(pend + not_pend).tolist():
-#         width = '8'
-#     else:
-#         width = '1'
-    
-#     return width
-
-
