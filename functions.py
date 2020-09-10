@@ -1,9 +1,13 @@
 import pandas as pd
 import numpy as np
+from functools import lru_cache
 
 import matplotlib.pyplot as plt
 from graphviz import Digraph
 from datetime import datetime, timedelta
+
+from multiprocessing import cpu_count
+from multiprocessing.dummy import Pool
 
 from sklearn.cluster import KMeans, DBSCAN
 from sklearn.preprocessing import StandardScaler
@@ -12,24 +16,18 @@ from sklearn.decomposition import PCA
 
 
 class Transaction():
-    """
-    Получаем последовательность событий и время исполнения событий, путем сдвига столбцов
     
-    Input: 
-          - DataFrame: (pd.DataFrame) с обязательным наличием столбцов (идентификаторы, события, время начала исполнения событий)
-          - col_transact_name: (string) имя стобца, содержащий последовательность событий
-          - col_time_name: (string) имя стобца, содержащий время начала исполнения каждого события
-          - col_identifier_name: (string) имя стобца, содержащий идентификаторы последовательности событий
-    Output:
-          - DataFrame: (pd.DataFrame) со столбцами ['case_name', 'transact', 'time_diff']
-    """
-    def __init__(self, DataFrame, col_transact_name, col_time_name, col_identifier_name):
+    def __init__(self, DataFrame, col_transact_name, col_time_name, col_identifier_name, timeformat = None):
         self.df = DataFrame.copy()
         self.tr_col_name = col_transact_name
         self.time_col_name = col_time_name
         self.df.rename(columns={col_identifier_name:"case_name"}, inplace=True)
         self.id_col_name = "case_name"
-        self.df[self.time_col_name] = pd.to_datetime(self.df[self.time_col_name], utc=True)
+        self.t_format = timeformat
+        if self.t_format is not None:
+            self.df[self.time_col_name] = pd.to_datetime(self.df[self.time_col_name], utc=True, format=self.t_format)
+        else:
+            self.df[self.time_col_name] = pd.to_datetime(self.df[self.time_col_name], utc=True)
         self.t_date = max(self.df[self.time_col_name]) + timedelta(days=22000)
         
     def group_case_by_time(self):
@@ -62,21 +60,12 @@ class Transaction():
         cls.transact()
         return cls.df[["case_name", "transact", "time_diff"]].reset_index(drop=True)
 
-
-
-
 class Prepare(Transaction):
-    """
-    Получаем Датафрейм, с преобразованными данными для построения графа, с добавлением нового события в лог
-    """
     
-    def __init__(self, DataFrame, col_transact_name, col_time_name, col_identifier_name):
-        super().__init__(DataFrame, col_transact_name, col_time_name, col_identifier_name)
+    def __init__(self, DataFrame, col_transact_name, col_time_name, col_identifier_name, timeformat = None):
+        super().__init__(DataFrame, col_transact_name, col_time_name, col_identifier_name, timeformat)
     
     def add_init_process(cls):
-        """
-        Функция добавляет новое событие <Start Log> для каждого идентификатора в Датафрейм
-        """
         time_start = cls.df[cls.time_col_name].min() - timedelta(seconds=1)
         concept_name = 'Start Log'
         cs_name = cls.df[cls.id_col_name].unique()
@@ -92,16 +81,8 @@ class Prepare(Transaction):
         return cls.df
 
 
+
 class KMeans_Clusterization():
-    
-    """
-    Проведем кластеризацию данных на основе данных о переходых между событиями для каждого идентификатора
-    Input: 
-          - DataFrame - сводная таблица по столбцам идентификатор - последовательность событий, с аггрегирующей функцией (size)
-          - model (sklearn.cluster.KMeans) инициализированный алгоритм с количеством кластеров по умолчанию
-    Output: DataFrame - сводная таблица с новым столбцом <clusters> - номер кластера для каждого идентификатора
-    """
-    
     def __init__(self, model, DataFrame):
         self.model_ = model
         self.df = DataFrame
@@ -128,33 +109,36 @@ class KMeans_Clusterization():
         self.model_.set_params(n_clusters=num_clusters)
         self.df["clusters"] = self.model_.fit_predict(self.df.values) 
         return self.df.reset_index()    
-    
+ 
+
+
 
     
 class DBSCAN_Clusterization():
     
-    """
-    Проведем кластеризацию данных на основе данных о переходых между событиями для каждого идентификатора
-    Input: DataFrame - сводная таблица по столбцам идентификатор - последовательность событий, с аггрегирующей функцией (size)
-    Output: DataFrame - сводная таблица с новым столбцом <clusters> - номер кластера для каждого идентификатора
-    """
-    
-    def __init__(self, pivot_tabl):
+    def __init__(self, pivot_tabl, use_pca=True):
         self.p_table = pivot_tabl.copy()
         self.pca_res = None
         self.dist = None
         self.ind = None
+        self.use_pca = use_pca
     
     def count_component(self):
-        single_name = [j.split('-->') for j in self.p_table.columns]
+        try:
+            single_name = [j.split('-->') for j in self.p_table.columns]
+        except:
+            single_name = [j.split('-->') for j in self.p_table.columns.get_level_values(1)]
         count = np.unique([l for l in single_name]).shape[0] - 2 # - 2 is 'Start log' and 'End log'
         return count
     
     def preparing(cls):
         sc = StandardScaler()
         X_scaled = sc.fit_transform(cls.p_table)
-        pca = PCA(n_components=cls.count_component())
-        cls.pca_res = pca.fit_transform(X_scaled)
+        if cls.use_pca:
+            pca = PCA(n_components=cls.count_component())
+            cls.pca_res = pca.fit_transform(X_scaled)
+        else:
+            cls.pca_res = X_scaled
     
     def calculate_distances(cls):
         cls.preparing()
@@ -180,24 +164,20 @@ class DBSCAN_Clusterization():
         model = DBSCAN(eps=eps_val, n_jobs=-1, min_samples=min_samples)
         model.fit(cls.pca_res)
         cls.p_table["clusters"] = model.labels_
-        cls.p_table.reset_index(inplace=True)
+        #cls.p_table.reset_index(inplace=True)
         print(f"Количество кластеров равно {len(np.unique(model.labels_))}")
-        return cls.p_table    
+        return cls.p_table.reset_index()  
     
 
 class Select_cluster():
-    """
-    Отберем данные в датафрейме с определенным номером кластера
     
-    Input: full DataFrame 
-    Output: cuted DataFrame with certain cluster number
-    """
-    def __init__(self, DataFrame, num_cluster):
+    def __init__(self, DataFrame, num_cluster, cluster_col_name):
         self.df = DataFrame
         self.n_cluster = num_cluster
+        self.cl_col = cluster_col_name
         
     def select(self):
-        ids = self.df[self.df["clusters"] == self.n_cluster]["case_name"].unique()
+        ids = self.df[self.df[self.cl_col] == self.n_cluster]["case_name"].unique()
         for_draw = self.df[self.df["case_name"].isin(ids)]
         print(f"Уникальных идентификаторов = {for_draw['case_name'].unique().shape[0]}")
         return for_draw
@@ -241,18 +221,28 @@ class Frequency_graph():
         self.graph.node('Log End', shape='doublecircle', color='brown3')
         self.graph.attr('node', shape='box', color='lightblue')
     
+    def count_transact(self, count_method):
+        if count_method == "uniq":
+            counts = self.df.groupby("transact")["case_name"]\
+                           .agg("nunique")\
+                           .sort_values(ascending=False)\
+                           .reset_index()
+        else:
+            counts = pd.DataFrame(self.df['transact'].value_counts()).reset_index()
+        counts.columns = ['transact', 'counts']
+        return counts
     
-    def stat_calculate(self, count_treshold, less_or_more):
+    def stat_calculate(cls, count_treshold, less_or_more, count_method):
         if count_treshold == 'All':
-            self.counts = pd.DataFrame(self.df['transact'].value_counts()).reset_index()
+            cls.counts = cls.count_transact(count_method)
         else:
             try:
                 if less_or_more == "<":
-                    counts = pd.DataFrame(self.df['transact'].value_counts()).reset_index()
-                    self.counts = counts[counts['transact'] < count_treshold]
+                    counts = cls.count_transact(count_method)
+                    cls.counts = counts[counts['counts'] < count_treshold]
                 elif less_or_more == ">":
-                    counts = pd.DataFrame(self.df['transact'].value_counts()).reset_index()
-                    self.counts = counts[counts['transact'] > count_treshold]
+                    counts = cls.count_transact(count_method)
+                    cls.counts = counts[counts['counts'] > count_treshold]
                 else:
                     return 'Недопустимое значение для параметра less_or_more или неправильно указано значение All'
             except Exception as e:
@@ -262,29 +252,29 @@ class Frequency_graph():
     
     @staticmethod
     def change_color_freq(count_transact, stat):
-        if count_transact <= stat[0]:
-            color = 'bisque3'#'brown'
-        elif (count_transact > stat[0]) and (count_transact <= stat[1]):
-            color = 'bisque3'#'coral1'
-        elif (count_transact > stat[1]) and (count_transact <= stat[2]):
-            color = 'bisque3'#'goldenrod'
-        elif (count_transact > stat[2]) and (count_transact <= stat[3]):
+        if count_transact <= 100:   ## <= stat[0]
+            color = 'brown'#'brown'  
+        elif (count_transact > 100) and (count_transact <= 500):  ## stat[0] > count_transact <= stat[1]
+            color = 'coral1'#'coral1'
+        elif (count_transact > 500) and (count_transact <= 1000):  ## etc
+            color = 'goldenrod'#'goldenrod'
+        elif (count_transact > 1000) and (count_transact <= 2000):
             color = 'deepskyblue1'
-        elif count_transact > stat[3]:
+        elif count_transact > 2000:
             color = 'cyan'
         return color
     
     @staticmethod
     def change_width_freq(count_transact, stat):
-        if count_transact <= stat[0]:
+        if count_transact <= 100: ## <= stat[0]
             width = '1'
-        elif (count_transact > stat[0]) and (count_transact <= stat[1]):
+        elif (count_transact > 100) and (count_transact <= 500): ## stat[0] > count_transact <= stat[1]
             width = '1'#'2'
-        elif (count_transact > stat[1]) and (count_transact <= stat[2]):
+        elif (count_transact > 500) and (count_transact <= 1000): ## etc
             width = '1'#'3'
-        elif (count_transact > stat[2]) and (count_transact <= stat[3]):
+        elif (count_transact > 1000) and (count_transact <= 2000):
             width = '4'
-        elif count_transact > stat[3]:
+        elif count_transact > 2000:
             width = '5'
         return width
     
@@ -297,12 +287,11 @@ class Frequency_graph():
         stat_percent = [percent_25, percent_50, percent_75, percent_95]
         return stat_percent
     
-    def draw_freq(cls, count_treshold = 'All', less_or_more = None):
-        cls.stat_calculate(count_treshold, less_or_more)
+    def draw_freq(cls, count_treshold = 'All', less_or_more = None, count_method = "uniq"):
+        cls.stat_calculate(count_treshold, less_or_more, count_method)
         cls.graph_init()
         cls.check_colon()
         
-        cls.counts.columns = ['transact', 'counts']
         transact = cls.counts['transact'].values
         countss = cls.counts['counts'].values
         
@@ -426,144 +415,4 @@ class Performance_graph(Frequency_graph):
                    penwidth=cls.change_width(time), 
                    color=cls.change_color(time),
                    fontcolor=cls.change_color(time))
-        cls.graph.view()        
-        
-
-def draw_frequency_graph(df_prepared, name_file = None, count_treshold = 'All', less_or_more = None):
-    
-    """
-    df_prepared - DataFrame, с 3 столбцами ['case_name', 'transact', 'time_diff'].
-    count_treshold - принимает на вход:
-        - string: "All" (отрисовываются ребра любой частотности)
-        - integer: 0, 10, 123,... (отрисовываются ребра с частотой до или с заданного диапазона,
-                                    указывается совместно с параметром less_or_more) 
-    less_or_more - принимает на вход:
-        - string: "<" или ">" (указывается для задания необходимого порога, если параметр 
-                                count_treshold принимает значение integer)
-    Функция возвращает граф, где цифрами обозначена частота перехода между двумя событиями.
-                             Чем ярче и толще линия, тем чаще встречается данный переход.
-    """
-    if count_treshold == 'All':
-        counts = pd.DataFrame(df_prepared['transact'].value_counts()).reset_index()#.sort_values(by='transact')
-    else:
-        try:
-            if less_or_more == "<":
-                counts = pd.DataFrame(df_prepared['transact'].value_counts()).reset_index()
-                counts = counts[counts['transact'] < count_treshold]
-            elif less_or_more == ">":
-                counts = pd.DataFrame(df_prepared['transact'].value_counts()).reset_index()
-                counts = counts[counts['transact'] > count_treshold]
-            else:
-                return 'Недопустимое значение для параметра less_or_more или неправильно указано значение All'
-        except Exception as e:
-            print(e)
-            print('Параметр count_treshold принимает либо значение All, либо  должно иметь тип integer,\
-            совместно с параметром less_or_more, который принимает одно из следующих значений: "<" или ">"')       
-            
-    counts.columns = ['transact', 'counts']
-    transact = counts['transact'].values
-    countss = counts['counts'].values
-    
-    if name_file is None:
-        curr_time = datetime.now().strftime("%H:%M:%S").replace(':', '-')
-        f = Digraph('finite_state_machine', filename=f'Graphs/Frequency_graph_{curr_time}')
-    else:
-        f = Digraph('finite_state_machine', filename=name_file)
-    
-    f.attr(rankdir='T', size='8,5')
-    
-    f.attr('node', shape='box', style='filled', color='deepskyblue')
-    f.node('Начало лога', shape='doublecircle', color='deepskyblue1')
-    f.node('Конец лога', shape='doublecircle', color='brown3')
-    f.attr('node', shape='box', color='lightblue')
-    
-    for c in range(len(transact)):
-        stat_percent = get_stat_freq(countss)
-        tr = transact[c]
-        count = int(countss[c])
-        start = tr.split('-->')[0]
-        end = tr.split('-->')[1]
-
-        f.edge('{0}'.format(start), 
-               '{0}'.format(end), 
-               label='{0}'.format(count), 
-               arrowhead='vee', 
-               penwidth=change_width_freq(count, stat_percent), 
-               color = change_color_freq(count, stat_percent), 
-               fontcolor=change_color_freq(count, stat_percent))
-    
-    print('Если всплывает много предупреждений, подсвеченных красным (данный вывод некорректен),\
-    значит в имени события содержится двоеточие, которое нужно заменить на тире')
-    f.view()        
-        
-        
-def draw_performance_graph(df_prepared, name_file = None, time_treshold = "All", less_or_more = None, type_value = 'median'):
-    """
-    df_prepared - DataFrame с 3 столбцами ['case_name', 'transact', 'time_diff'].
-    time_treshold - временнОй порог для отрисовки:
-        - string: "All" (отрисовка ребер любой длительности)
-        - integer: 0, 10, 123,... (отрисовка ребер с событиями, между которыми время исполнения больше или 
-                                   меньше заданного, указывается в часах, совместно с параметром less_or_more) 
-    less_or_more - принимает на вход:
-        - string: "<" или ">" (указывается для задания необходимого порога)
-    type_value - тип значения времени:
-        - string: "min","max", "median" (какой тип применить для расчета времени)
-    Функция возвращает граф, где на ребрах обозначены время исполнения перехода между двумя событиями.
-                             Чем темнее и толще линия, тем дольше исполняется данный переход.
-    """
-    if time_treshold == 'All':
-        med_time = pd.DataFrame(df_prepared.groupby('transact')['time_diff'].agg(['min', 
-                                                                                  'max', 
-                                                                                  'median'])).reset_index()
-    else:
-        try:
-            if less_or_more == "<":
-                med_time = pd.DataFrame(df_prepared.groupby('transact')['time_diff'].agg(['min', 
-                                                                                          'max', 
-                                                                                          'median'])).reset_index()
-                med_time = med_time[med_time[type_value] < time_treshold*3600]
-            elif less_or_more == ">":
-                med_time = pd.DataFrame(df_prepared.groupby('transact')['time_diff'].agg(['min', 
-                                                                                          'max', 
-                                                                                          'median'])).reset_index()
-                med_time = med_time[med_time[type_value] > time_treshold*3600]
-            else:
-                return 'Недопустимое значение для параметра less_or_more или неправильно указано значение All'
-        except Exception as e:
-            print(e)
-            print('Параметр time_treshold принимает либо значение All, либо  должно иметь тип integer,\
-            совместно с параметром less_or_more, который принимает одно из следующих значений: "<" или ">"')
-    
-    list_trans = med_time['transact'].values
-    times = med_time['median'].values
-    
-    
-    if name_file is None:
-        curr_time = datetime.now().strftime("%H:%M:%S").replace(':', '-')
-        f = Digraph('finite_state_machine', filename=f'Performance_graph_{curr_time}')
-    else:
-        f = Digraph('finite_state_machine', filename=name_file)
-    
-    f.attr(rankdir='T', size='8,5')
-
-    f.attr('node', shape='box', style='filled', color='deepskyblue')
-    f.node('Начало лога', shape='doublecircle')
-    f.node('Конец лога', shape='doublecircle', color='brown3')
-    f.attr('node', shape='box', color='lightblue')
-
-    for c in range(len(list_trans)):
-        tr = list_trans[c]
-        time = float(times[c])
-        start = tr.split('-->')[0]
-        end = tr.split('-->')[1]
-
-        f.edge('{0}'.format(start), '{0}'.format(end), 
-               label='{0}'.format(secondsToText(time)), 
-               arrowhead='vee', 
-               penwidth=change_width(time), 
-               color = change_color(time),
-               fontcolor=change_color(time))
-    
-    print('Если всплывает много предупреждений, подсвеченных красным,\
-    значит в имени события содержится двоеточие, которое нужно заменить на тире')
-    f.view()
+        cls.graph.view()   
